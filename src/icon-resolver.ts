@@ -1,35 +1,57 @@
 // ─── Azure Icon Resolver ───
 // Maps ARM resource types / service names to Azure service icon SVGs.
 // Icons are from the official Azure architecture icons set.
+// Uses explicit Vite ?url imports so icons are properly bundled.
 
-// Namespace → icon category folder mapping
-const NAMESPACE_TO_CATEGORY: Record<string, string> = {
-  'Microsoft.Compute': 'Compute',
-  'Microsoft.ContainerService': 'Compute',
-  'Microsoft.App': 'Containers',
-  'Microsoft.ContainerInstance': 'Containers',
-  'Microsoft.ContainerRegistry': 'Containers',
-  'Microsoft.Web': 'Web',
-  'Microsoft.Sql': 'Databases',
-  'Microsoft.DBforMySQL': 'Databases',
-  'Microsoft.DBforPostgreSQL': 'Databases',
-  'Microsoft.DocumentDB': 'IoT', // Cosmos DB is under IoT in the icon set
-  'Microsoft.Storage': 'Storage',
-  'Microsoft.Network': 'Networking',
-  'Microsoft.KeyVault': 'Security',
-  'Microsoft.CognitiveServices': 'AI + Machine Learning',
-  'Microsoft.MachineLearningServices': 'AI + Machine Learning',
-  'Microsoft.Cache': 'Databases',
-  'Microsoft.Devices': 'IoT',
-  'Microsoft.EventHub': 'Analytics',
-  'Microsoft.ServiceBus': 'Integration',
-  'Microsoft.OperationalInsights': 'Analytics',
-  'Microsoft.Monitor': 'Management + Governance',
-  'Microsoft.Authorization': 'Identity',
-  'Microsoft.ManagedIdentity': 'Identity',
+// ─── Explicit icon imports ───
+import iconKubernetes from './icons/Compute/Kubernetes Services.svg?url';
+import iconVM from './icons/Compute/Virtual Machine.svg?url';
+import iconAppServicePlan from './icons/App Services/App Service Plans.svg?url';
+import iconAppServices from './icons/Web/App Services.svg?url';
+import iconContainerInstances from './icons/Containers/Container Instances.svg?url';
+import iconContainerRegistries from './icons/Containers/Container Registries.svg?url';
+import iconSqlServer from './icons/Databases/SQL Server.svg?url';
+import iconSqlDatabase from './icons/Databases/SQL Database.svg?url';
+import iconAzureSql from './icons/Databases/Azure SQL.svg?url';
+import iconCosmosDb from './icons/IoT/Azure Cosmos DB.svg?url';
+import iconStorageAccounts from './icons/Storage/Storage Accounts.svg?url';
+import iconKeyVaults from './icons/Security/Key Vaults.svg?url';
+import iconVirtualNetworks from './icons/Networking/Virtual Networks.svg?url';
+import iconLoadBalancers from './icons/Networking/Load Balancers.svg?url';
+import iconAppGateways from './icons/Networking/Application Gateways.svg?url';
+import iconCognitiveServices from './icons/AI + Machine Learning/Cognitive Services.svg?url';
+import iconMachineLearning from './icons/AI + Machine Learning/Machine Learning.svg?url';
+import iconAzureOpenAI from './icons/AI + Machine Learning/Azure OpenAI.svg?url';
+import iconRedis from './icons/Databases/Cache Redis.svg?url';
+import iconIotHub from './icons/IoT/IoT Hub.svg?url';
+import iconFunctionApps from './icons/IoT/Function Apps.svg?url';
+
+// Icon path key → resolved URL
+const ICON_URLS: Record<string, string> = {
+  'Compute/Kubernetes Services': iconKubernetes,
+  'Compute/Virtual Machine': iconVM,
+  'App Services/App Service Plans': iconAppServicePlan,
+  'Web/App Services': iconAppServices,
+  'Containers/Container Instances': iconContainerInstances,
+  'Containers/Container Registries': iconContainerRegistries,
+  'Databases/SQL Server': iconSqlServer,
+  'Databases/SQL Database': iconSqlDatabase,
+  'Databases/Azure SQL': iconAzureSql,
+  'IoT/Azure Cosmos DB': iconCosmosDb,
+  'Storage/Storage Accounts': iconStorageAccounts,
+  'Security/Key Vaults': iconKeyVaults,
+  'Networking/Virtual Networks': iconVirtualNetworks,
+  'Networking/Load Balancers': iconLoadBalancers,
+  'Networking/Application Gateways': iconAppGateways,
+  'AI + Machine Learning/Cognitive Services': iconCognitiveServices,
+  'AI + Machine Learning/Machine Learning': iconMachineLearning,
+  'AI + Machine Learning/Azure OpenAI': iconAzureOpenAI,
+  'Databases/Cache Redis': iconRedis,
+  'IoT/IoT Hub': iconIotHub,
+  'IoT/Function Apps': iconFunctionApps,
 };
 
-// ARM resource type → specific icon filename
+// ARM resource type → icon path key
 const RESOURCE_TYPE_TO_ICON: Record<string, string> = {
   'Microsoft.ContainerService/managedClusters': 'Compute/Kubernetes Services',
   'Microsoft.Web/sites': 'Web/App Services',
@@ -47,12 +69,12 @@ const RESOURCE_TYPE_TO_ICON: Record<string, string> = {
   'Microsoft.Network/applicationGateways': 'Networking/Application Gateways',
   'Microsoft.CognitiveServices/accounts': 'AI + Machine Learning/Cognitive Services',
   'Microsoft.MachineLearningServices/workspaces': 'AI + Machine Learning/Machine Learning',
-  'Microsoft.Cache/redis': 'Databases/Azure Cache For Redis',
+  'Microsoft.Cache/redis': 'Databases/Cache Redis',
   'Microsoft.Devices/IotHubs': 'IoT/IoT Hub',
   'Microsoft.Web/sites/functions': 'IoT/Function Apps',
 };
 
-// Keyword → icon path for general lookups
+// Keyword → icon path key for general lookups
 const KEYWORD_TO_ICON: Record<string, string> = {
   kubernetes: 'Compute/Kubernetes Services',
   aks: 'Compute/Kubernetes Services',
@@ -73,41 +95,26 @@ const KEYWORD_TO_ICON: Record<string, string> = {
   cognitive: 'AI + Machine Learning/Cognitive Services',
   openai: 'AI + Machine Learning/Azure OpenAI',
   'machine learning': 'AI + Machine Learning/Machine Learning',
-  redis: 'Databases/Azure Cache For Redis',
+  redis: 'Databases/Cache Redis',
   iot: 'IoT/IoT Hub',
 };
 
-const ICONS_BASE = new URL('./icons/', import.meta.url).href;
-
 /** Get the icon URL for an ARM resource type */
 export function getAzureIconUrl(resourceType: string): string | null {
-  // 1. Exact match
-  const exact = RESOURCE_TYPE_TO_ICON[resourceType];
-  if (exact) {
-    return `${ICONS_BASE}${encodeURIPath(exact)}.svg`;
+  const iconKey = RESOURCE_TYPE_TO_ICON[resourceType];
+  if (iconKey) {
+    return ICON_URLS[iconKey] || null;
   }
-
-  // 2. Namespace category match — try to fuzzy match the type name
-  const namespace = resourceType.split('/')[0];
-  const category = NAMESPACE_TO_CATEGORY[namespace];
-  if (category) {
-    return `${ICONS_BASE}${encodeURIComponent(category)}/Azure%20Default.svg`;
-  }
-
   return null;
 }
 
 /** Get icon URL by keyword/service name */
 export function getAzureIconByKeyword(keyword: string): string | null {
   const lower = keyword.toLowerCase();
-  for (const [key, path] of Object.entries(KEYWORD_TO_ICON)) {
+  for (const [key, iconKey] of Object.entries(KEYWORD_TO_ICON)) {
     if (lower.includes(key)) {
-      return `${ICONS_BASE}${encodeURIPath(path)}.svg`;
+      return ICON_URLS[iconKey] || null;
     }
   }
   return null;
-}
-
-function encodeURIPath(path: string): string {
-  return path.split('/').map((p) => encodeURIComponent(p)).join('/');
 }
