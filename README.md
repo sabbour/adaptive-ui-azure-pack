@@ -1,5 +1,7 @@
 # @sabbour/adaptive-ui-azure-pack
 
+[![CI](https://github.com/sabbour/adaptive-ui-azure-pack/actions/workflows/ci.yml/badge.svg)](https://github.com/sabbour/adaptive-ui-azure-pack/actions/workflows/ci.yml)
+
 An [Adaptive UI](https://github.com/sabbour/adaptive-ui-framework) component pack for **Azure Cloud** integration. Provides authentication, ARM API interaction, dynamic resource forms, and architecture diagram icons.
 
 ## Components
