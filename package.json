@@ -9,11 +9,25 @@
     ".": "./src/index.ts",
     "./diagram-icons": "./src/diagram-icons.ts"
   },
+  "files": ["src", "dist"],
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "registry": "https://npm.pkg.github.com",
+    "main": "src/index.ts",
+    "types": "dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./src/index.ts"
+      },
+      "./diagram-icons": {
+        "types": "./dist/diagram-icons.d.ts",
+        "default": "./src/diagram-icons.ts"
+      }
+    }
   },
   "scripts": {
-    "build": "tsc -b --noEmit"
+    "build": "tsc -b --noEmit",
+    "prepublishOnly": "tsc -b"
   },
   "dependencies": {
     "@azure/msal-browser": "^4.29.1"
