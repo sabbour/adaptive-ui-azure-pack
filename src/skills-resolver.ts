@@ -10,7 +10,11 @@
 const RESOURCE_TYPE_TRIGGERS: Record<string, { resourceType: string; apiVersion: string }> = {
   'aks|kubernetes|managed cluster|managedcluster': {
     resourceType: 'Microsoft.ContainerService/managedClusters',
-    apiVersion: '2024-01-01',
+    apiVersion: '2025-03-01',
+  },
+  'aks automatic|aks auto|managed system|hostedsystem': {
+    resourceType: 'Microsoft.ContainerService/managedClusters',
+    apiVersion: '2025-03-01',
   },
   'app service|web app|webapp|microsoft.web/sites': {
     resourceType: 'Microsoft.Web/sites',
@@ -58,6 +62,13 @@ export async function resolveAzureSkills(prompt: string): Promise<string | null>
     if (schemas.length > 0) {
       return `\n--- AZURE DOMAIN KNOWLEDGE ---\n${schemas.join('\n\n')}`;
     }
+  }
+
+  // Inject AKS Automatic domain knowledge when AKS is discussed
+  const aksKeywords = ['aks', 'kubernetes', 'managed cluster', 'aks automatic', 'gateway api', 'deployment safeguard', 'workload identity'];
+  const isAksContext = aksKeywords.some((kw) => lower.includes(kw));
+  if (isAksContext) {
+    return '\n' + AKS_AUTOMATIC_KNOWLEDGE;
   }
 
   return null;
@@ -110,19 +121,25 @@ function resolveArmSchemas(prompt: string): string[] {
 const ARM_BODY_TEMPLATES: Record<string, string> = {
   'Microsoft.ContainerService/managedClusters': JSON.stringify({
     location: '{{location}}',
+    sku: { name: 'Automatic', tier: 'Standard' },
     properties: {
       dnsPrefix: '{{dnsPrefix}}',
-      agentPoolProfiles: [{
-        name: 'nodepool1',
-        count: 2,
-        vmSize: 'Standard_B2s',
-        mode: 'System',
-        osType: 'Linux',
-        type: 'VirtualMachineScaleSets',
-      }],
+      hostedSystemProfile: { enabled: true },
       networkProfile: {
         networkPlugin: 'azure',
+        networkPluginMode: 'overlay',
         loadBalancerSku: 'standard',
+      },
+      ingressProfile: {
+        webAppRouting: {
+          enabled: true,
+          nginx: { defaultIngressControllerType: 'None' },
+          defaultDomain: { enabled: true },
+          gatewayAPIImplementations: {
+            appRoutingIstio: { mode: 'Enabled' },
+          },
+        },
+        gatewayAPI: { installation: 'Standard' },
       },
     },
   }, null, 2),
@@ -193,3 +210,74 @@ const ARM_BODY_TEMPLATES: Record<string, string> = {
 
   'Microsoft.Authorization/roleAssignments': 'SPECIAL',
 };
+
+// ─── AKS Automatic Domain Knowledge ───
+const AKS_AUTOMATIC_KNOWLEDGE = `--- AKS AUTOMATIC DOMAIN KNOWLEDGE ---
+
+CLUSTER CREATION (API 2025-03-01):
+- Use sku.name="Automatic" and sku.tier="Standard"
+- Managed system node pools: set "hostedSystemProfile": { "enabled": true }
+- Do NOT specify agentPoolProfiles for system pools — they are fully managed
+- OIDC issuer and Workload Identity are enabled by default
+
+GATEWAY API (MANDATORY):
+- GatewayClass: "approuting-istio" — ALWAYS use this, never Ingress/nginx
+- Cluster ingressProfile must include:
+  webAppRouting.enabled=true, nginx.defaultIngressControllerType="None",
+  defaultDomain.enabled=true, gatewayAPIImplementations.appRoutingIstio.mode="Enabled",
+  gatewayAPI.installation="Standard"
+- Gateway resource example:
+  apiVersion: gateway.networking.k8s.io/v1
+  kind: Gateway
+  metadata:
+    name: app-gateway
+  spec:
+    gatewayClassName: approuting-istio
+    listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Same
+- HTTPRoute resource example:
+  apiVersion: gateway.networking.k8s.io/v1
+  kind: HTTPRoute
+  metadata:
+    name: app-route
+  spec:
+    parentRefs:
+    - name: app-gateway
+    rules:
+    - backendRefs:
+      - name: app-service
+        port: 80
+
+WORKLOAD IDENTITY (MANDATORY):
+- AKS Automatic has OIDC + Workload Identity enabled by default
+- For ALL Azure service connections (Cosmos DB, Azure SQL, PostgreSQL, Key Vault, AI Foundry, ACR, AI Search, Redis, Storage):
+  1. Create a User-Assigned Managed Identity
+  2. Create a Federated Identity Credential linking K8s ServiceAccount to the Managed Identity (issuer = AKS OIDC issuer URL)
+  3. K8s ServiceAccount annotation: azure.workload.identity/client-id: "<client-id>"
+  4. Pod label: azure.workload.identity/use: "true"
+  5. Assign RBAC roles to the Managed Identity on target resources
+- NEVER use connection strings with secrets — always Workload Identity
+- App code uses DefaultAzureCredential (Azure SDK) which automatically works with Workload Identity
+
+DEPLOYMENT SAFEGUARDS (AKS enforces via Azure Policy):
+All pods MUST have:
+- resources.requests AND resources.limits (CPU + memory) on every container
+- livenessProbe and readinessProbe
+- runAsNonRoot: true in pod securityContext
+- No hostNetwork, hostPID, hostIPC
+- No privileged containers
+- allowPrivilegeEscalation: false
+- No :latest image tags — use specific versions or SHA digests
+- readOnlyRootFilesystem: true where possible
+Non-compliant manifests are REJECTED by the cluster.
+
+ACR INTEGRATION:
+- Default: create new ACR, attach to AKS via AcrPull role assignment on kubelet identity
+- Offer option to use existing ACR via azurePicker
+- NEVER use imagePullSecrets with passwords`;
+
