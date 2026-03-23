@@ -862,9 +862,12 @@ export function AzurePicker({ node }: AdaptiveComponentProps<AzurePickerNode>) {
   const api = interpolate(node.api, state as Record<string, string>, undefined, undefined, { allowSensitive: true });
   const ARM_BASE_URL = 'https://management.azure.com';
 
+  // Skip fetch if interpolation left empty segments (missing state values like subscription ID)
+  const hasUnresolved = api.includes('//') && !api.startsWith('http');
+
   useEffect(() => {
     if (disabled) return;
-    if (!token || !api) return;
+    if (!token || !api || hasUnresolved) return;
     let cancelled = false;
 
     (async () => {
@@ -919,7 +922,12 @@ export function AzurePicker({ node }: AdaptiveComponentProps<AzurePickerNode>) {
     })();
 
     return () => { cancelled = true; };
-  }, [token, api]);
+  }, [token, api, hasUnresolved]);
+
+  if (hasUnresolved) {
+    return React.createElement(LoadingSpinner, { label: node.loadingLabel ?? 'Waiting for selection...' });
+  }
+
   if (!token) {
     return React.createElement(Banner, { message: 'Sign in to Azure first', type: 'warning' });
   }
@@ -949,7 +957,7 @@ export function AzurePicker({ node }: AdaptiveComponentProps<AzurePickerNode>) {
           setActiveSubscriptionId(val);
         }
       },
-      placeholder: `— Select (${options.length} available) —`,
+      placeholder: options.length > 0 ? 'Select an option' : 'Loading...',
     })
   );
 }

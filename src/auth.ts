@@ -34,7 +34,7 @@ const proxyNetworkClient: INetworkModule = {
 function rewriteUrl(url: string): string {
   const AAD_HOST = 'https://login.microsoftonline.com';
   if (url.startsWith(AAD_HOST)) {
-    return '/auth-proxy' + url.slice(AAD_HOST.length);
+    return '/api/auth-proxy' + url.slice(AAD_HOST.length);
   }
   return url;
 }

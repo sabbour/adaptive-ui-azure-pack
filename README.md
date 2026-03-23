@@ -18,6 +18,7 @@ An [Adaptive UI](https://github.com/sabbour/adaptive-ui-framework) component pac
 | Tool | Description |
 |------|-------------|
 | `azure_arm_get` | Read-only ARM REST API queries. Use when the LLM needs data to reason about (check resources, validate config). |
+| `azure_pricing` | Azure retail pricing API queries. Look up VM SKUs, managed service costs by region. Returns up to 10 matching price records. |
 
 ## Intent Resolvers
 
@@ -53,6 +54,8 @@ const azurePack = createAzurePack();
 
 - User must sign in via the `azureLogin` component (sets `__azureToken` in state)
 - Subscription is auto-selected if only one is available
+- All API calls use `/api/` prefixed paths routed through the Azure Functions proxy (handles CORS for Azure AD, pricing API)
+- The `azurePicker` guards against unresolved state interpolation (shows "Waiting for selection..." instead of making broken API calls)
 
 ## License
 

@@ -1,5 +1,4 @@
-import type { ComponentPack, IntentResolverEntry } from '@sabbour/adaptive-ui-core';
-import type { AdaptiveNode } from '@sabbour/adaptive-ui-core';
+import type { ComponentPack } from '@sabbour/adaptive-ui-core';
 import { trackedFetch } from '@sabbour/adaptive-ui-core';
 import { AzureResourceForm, AzureLogin, AzureQuery, AzurePicker, getActiveSubscriptionId, setActiveSubscriptionId } from './components';
 import { fetchSubscriptions } from './arm-introspection';
@@ -28,6 +27,7 @@ RUNTIME BEHAVIOR:
 
 TOOLS (inference-time, LLM sees results):
 - azure_arm_get: Read-only ARM API query. Use ONLY when you need data to reason about (check resources, validate config). NOT for selection lists. Requires sign-in.
+- azure_pricing: Look up Azure retail prices for any SKU in any region. Public API, no sign-in needed. Use to show cost estimates for VMs (especially GPU SKUs), managed services, and infrastructure comparisons.
 
 COMPONENTS (use in "ask" as {type:"component",component:"name",props:{}}):
 
@@ -77,61 +77,6 @@ export function createAzurePack(): ComponentPack {
     systemPrompt: AZURE_SYSTEM_PROMPT,
     resolveSkills: resolveAzureSkills,
     settingsComponent: AzureSettings,
-    intentResolvers: {
-      'azure-regions': {
-        description: 'Pick an Azure region (fetched from ARM API)',
-        props: 'key, label?',
-        resolve: (ask) => ({
-          type: 'azurePicker',
-          api: '/subscriptions/{{state.__azureSubscription}}/locations?api-version=2022-12-01',
-          bind: (ask.key ?? ask.bind) as string,
-          label: (ask.label as string) ?? 'Azure Region',
-          labelKey: 'displayName',
-          valueKey: 'name',
-          filterKey: 'metadata.regionType',
-          filterValue: 'Physical',
-          loadingLabel: 'Loading Azure regions...',
-        } as unknown as AdaptiveNode),
-      },
-      'azure-resource-groups': {
-        description: 'Pick an Azure resource group (fetched from ARM API)',
-        props: 'key, label?',
-        resolve: (ask) => ({
-          type: 'azurePicker',
-          api: '/subscriptions/{{state.__azureSubscription}}/resourcegroups?api-version=2022-09-01',
-          bind: (ask.key ?? ask.bind) as string,
-          label: (ask.label as string) ?? 'Resource Group',
-          labelKey: 'name',
-          valueKey: 'name',
-          loadingLabel: 'Loading resource groups...',
-        } as unknown as AdaptiveNode),
-      },
-      'azure-skus': {
-        description: 'Pick SKU/tier for an Azure resource type (fetched from ARM metadata)',
-        props: 'key, resourceType, label?',
-        resolve: (ask) => ({
-          type: 'azureResourceForm',
-          resourceType: ask.resourceType,
-          bind: (ask.key ?? ask.bind) as string,
-        } as unknown as AdaptiveNode),
-      },
-      'azure-subscriptions': {
-        description: 'Pick an Azure subscription (fetched from ARM API)',
-        props: 'key, label?',
-        resolve: (ask) => ({
-          type: 'azurePicker',
-          api: '/subscriptions?api-version=2022-12-01',
-          bind: (ask.key ?? ask.bind) as string,
-          labelBind: `${String(ask.key ?? ask.bind)}Name`,
-          label: (ask.label as string) ?? 'Azure Subscription',
-          labelKey: 'displayName',
-          valueKey: 'subscriptionId',
-          filterKey: 'state',
-          filterValue: 'Enabled',
-          loadingLabel: 'Loading subscriptions...',
-        } as unknown as AdaptiveNode),
-      },
-    },
     tools: [
       {
         definition: {
@@ -184,6 +129,62 @@ export function createAzurePack(): ComponentPack {
             return text.length > 8000 ? text.slice(0, 8000) + '\n[truncated]' : text;
           } catch (err) {
             return `Failed to call ARM API: ${err instanceof Error ? err.message : String(err)}`;
+          }
+        },
+      },
+      {
+        definition: {
+          type: 'function' as const,
+          function: {
+            name: 'azure_pricing',
+            description: 'Look up Azure retail prices for VMs, managed services, or any Azure SKU. Public API — no sign-in required. Use to estimate infrastructure costs, compare GPU VM prices for KAITO model hosting, or show managed vs in-cluster cost trade-offs. Returns up to 10 matching price records with hourly rates in USD.',
+            parameters: {
+              type: 'object',
+              properties: {
+                armSkuName: {
+                  type: 'string',
+                  description: 'ARM SKU name (e.g., "Standard_NC24ads_A100_v4", "Standard_D4s_v5"). If querying a non-VM service, omit this.',
+                },
+                serviceName: {
+                  type: 'string',
+                  description: 'Azure service name (e.g., "Virtual Machines", "Azure Cosmos DB", "Redis Cache", "Azure Database for PostgreSQL"). Case-sensitive.',
+                },
+                armRegionName: {
+                  type: 'string',
+                  description: 'Azure region (e.g., "eastus", "westeurope"). If omitted, returns global/default prices.',
+                },
+                currencyCode: {
+                  type: 'string',
+                  description: 'Currency code (default: "USD"). Examples: "EUR", "GBP", "JPY".',
+                },
+              },
+              required: [],
+            },
+          },
+        },
+        handler: async (args: Record<string, unknown>) => {
+          const filters: string[] = [];
+          if (args.armSkuName) filters.push(`armSkuName eq '${String(args.armSkuName)}'`);
+          if (args.serviceName) filters.push(`serviceName eq '${String(args.serviceName)}'`);
+          if (args.armRegionName) filters.push(`armRegionName eq '${String(args.armRegionName)}'`);
+          filters.push("priceType eq 'Consumption'");
+
+          const currency = args.currencyCode ? `currencyCode='${String(args.currencyCode)}'&` : '';
+          const filterStr = filters.join(' and ');
+          const url = `/api/pricing-proxy/api/retail/prices?${currency}$filter=${encodeURIComponent(filterStr)}&meterRegion='primary'`;
+
+          try {
+            const res = await trackedFetch(url, { headers: { Accept: 'application/json' } });
+            if (!res.ok) return `Pricing API error (${res.status})`;
+            const data = await res.json();
+            const items = (data.Items || []).slice(0, 10);
+            if (items.length === 0) return 'No pricing data found for the given filters. Check SKU name spelling and region availability.';
+            const summary = items.map((item: Record<string, unknown>) =>
+              `${item.armSkuName || item.skuName} | ${item.meterName} | $${item.retailPrice}/hr | ${item.armRegionName} | ${item.productName}`
+            ).join('\n');
+            return `SKU | Meter | Price | Region | Product\n${summary}`;
+          } catch (err) {
+            return `Failed to fetch pricing: ${err instanceof Error ? err.message : String(err)}`;
           }
         },
       },
