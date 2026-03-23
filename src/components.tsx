@@ -753,52 +753,103 @@ interface AzurePickerNode extends AdaptiveNodeBase {
   loadingLabel?: string;
 }
 
-// ─── API Version Auto-Resolution Cache ───
-// Caches resolved API versions per resource provider so only the first
-// request for a given provider type needs a retry; all subsequent ones use 1 call.
-const apiVersionCache = new Map<string, string>();
+// ─── API Version Resolution via ARM Provider Metadata ───
+// Resolves the correct API version for any resource type by querying the ARM
+// provider metadata API (same source of truth as the azure-rest-api-specs repo).
+// Cached per provider namespace — one metadata call covers all resource types
+// under that namespace (e.g., one call for Microsoft.ContainerRegistry covers
+// both /registries and /registries/replications).
 
-/** Extract the resource provider key from an ARM URL path (e.g., "microsoft.containerregistry/registries") */
-function extractProviderKey(url: string): string | null {
-  const match = url.match(/\/providers\/(Microsoft\.[^/]+\/[^/?]+)/i);
-  return match ? match[1].toLowerCase() : null;
+const ARM_META_API_VERSION = '2022-09-01';
+
+/** Cache: provider namespace (lowercase) → Map<resourceType (lowercase) → latestStableVersion> */
+const providerVersionCache = new Map<string, Map<string, string>>();
+
+/** In-flight metadata requests to avoid duplicate fetches */
+const providerFetchPromises = new Map<string, Promise<Map<string, string> | null>>();
+
+/** Extract provider namespace and resource type from an ARM URL path */
+function parseProviderFromUrl(url: string): { namespace: string; resourceType: string } | null {
+  // Match /providers/Microsoft.Foo/bars or /providers/Microsoft.Foo/bars/... 
+  const match = url.match(/\/providers\/(Microsoft\.[^/]+)\/([^/?]+)/i);
+  if (!match) return null;
+  return { namespace: match[1], resourceType: match[2] };
 }
 
-/** If we have a cached version for this provider, replace the api-version in the URL */
-function applyCachedApiVersion(apiPath: string): string {
-  const key = extractProviderKey(apiPath);
-  if (!key) return apiPath;
-  const cached = apiVersionCache.get(key);
-  if (!cached) return apiPath;
-  return apiPath.replace(/api-version=[^&]+/, 'api-version=' + cached);
+/** Extract subscription ID from an ARM URL path */
+function parseSubscriptionFromUrl(url: string): string | null {
+  const match = url.match(/\/subscriptions\/([^/]+)/i);
+  return match ? match[1] : null;
 }
 
-/** Parse supported versions from a 400 error, cache the best one, and retry */
-async function tryResolveApiVersion(failedRes: Response, fetchUrl: string, token: string): Promise<Response | null> {
-  try {
-    const errBody = await failedRes.clone().json();
-    const errMsg: string = errBody?.error?.message || '';
-    if (!errMsg.includes('supported versions are')) return null;
+/** Fetch provider metadata and cache all resource type versions */
+async function fetchProviderMetadata(namespace: string, subscriptionId: string, token: string): Promise<Map<string, string> | null> {
+  const cacheKey = namespace.toLowerCase();
 
-    const versionsList = errMsg.split('supported versions are ')[1];
-    if (!versionsList) return null;
+  // Return cached result
+  const cached = providerVersionCache.get(cacheKey);
+  if (cached) return cached;
 
-    const versions = versionsList.split(',').map((v: string) => v.trim());
-    const stable = versions.filter((v: string) => !v.includes('preview'));
-    const best = (stable.length > 0 ? stable[0] : versions[0]) || '';
-    if (!best) return null;
+  // Deduplicate in-flight requests
+  const existing = providerFetchPromises.get(cacheKey);
+  if (existing) return existing;
 
-    // Cache for future calls
-    const key = extractProviderKey(fetchUrl);
-    if (key) apiVersionCache.set(key, best);
+  const promise = (async (): Promise<Map<string, string> | null> => {
+    try {
+      const res = await trackedFetch(
+        `https://management.azure.com/subscriptions/${subscriptionId}/providers/${namespace}?api-version=${ARM_META_API_VERSION}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      const resourceTypes: any[] = data.resourceTypes || [];
 
-    const correctedUrl = fetchUrl.replace(/api-version=[^&]+/, 'api-version=' + best);
-    return trackedFetch(correctedUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-  } catch {
-    return null;
+      const versionMap = new Map<string, string>();
+      for (const rt of resourceTypes) {
+        const typeName = (rt.resourceType || '').toLowerCase();
+        const versions: string[] = rt.apiVersions || [];
+        // Pick latest stable (non-preview), fall back to first available
+        const stable = versions.filter((v: string) => !v.includes('preview'));
+        const best = stable.length > 0 ? stable[0] : versions[0];
+        if (typeName && best) {
+          versionMap.set(typeName, best);
+        }
+      }
+
+      providerVersionCache.set(cacheKey, versionMap);
+      return versionMap;
+    } catch {
+      return null;
+    } finally {
+      providerFetchPromises.delete(cacheKey);
+    }
+  })();
+
+  providerFetchPromises.set(cacheKey, promise);
+  return promise;
+}
+
+/** Resolve the correct API version for an ARM URL, replacing it in the path.
+ *  Returns the corrected URL. If resolution fails, returns the original. */
+async function resolveApiVersion(apiPath: string, token: string): Promise<string> {
+  const provider = parseProviderFromUrl(apiPath);
+  if (!provider) return apiPath;
+
+  const subscriptionId = parseSubscriptionFromUrl(apiPath);
+  if (!subscriptionId) return apiPath;
+
+  const versionMap = await fetchProviderMetadata(provider.namespace, subscriptionId, token);
+  if (!versionMap) return apiPath;
+
+  const correctVersion = versionMap.get(provider.resourceType.toLowerCase());
+  if (!correctVersion) return apiPath;
+
+  // Replace api-version in the URL, or append if missing
+  if (apiPath.includes('api-version=')) {
+    return apiPath.replace(/api-version=[^&]+/, 'api-version=' + correctVersion);
   }
+  const separator = apiPath.includes('?') ? '&' : '?';
+  return apiPath + separator + 'api-version=' + correctVersion;
 }
 
 export function AzurePicker({ node }: AdaptiveComponentProps<AzurePickerNode>) {
@@ -821,20 +872,12 @@ export function AzurePicker({ node }: AdaptiveComponentProps<AzurePickerNode>) {
         setLoading(true);
         setError(null);
 
-        // Apply cached API version if we've resolved one for this provider before
-        let fetchUrl = `${ARM_BASE_URL}${applyCachedApiVersion(api)}`;
-        let res = await trackedFetch(fetchUrl, {
+        // Resolve the correct API version from ARM provider metadata before making the call
+        const resolvedApi = await resolveApiVersion(api, token);
+        const fetchUrl = `${ARM_BASE_URL}${resolvedApi}`;
+        const res = await trackedFetch(fetchUrl, {
           headers: { Authorization: `Bearer ${token}` },
         });
-
-        // Auto-resolve API version: if the version is invalid, parse supported
-        // versions from the error, cache the best one, and retry.
-        if (res.status === 400) {
-          const resolved = await tryResolveApiVersion(res, fetchUrl, token);
-          if (resolved) {
-            res = resolved;
-          }
-        }
 
         if (!res.ok) throw new Error(`API error: ${res.status}`);
         const data = await res.json();
