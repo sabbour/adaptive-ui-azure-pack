@@ -753,6 +753,54 @@ interface AzurePickerNode extends AdaptiveNodeBase {
   loadingLabel?: string;
 }
 
+// ─── API Version Auto-Resolution Cache ───
+// Caches resolved API versions per resource provider so only the first
+// request for a given provider type needs a retry; all subsequent ones use 1 call.
+const apiVersionCache = new Map<string, string>();
+
+/** Extract the resource provider key from an ARM URL path (e.g., "microsoft.containerregistry/registries") */
+function extractProviderKey(url: string): string | null {
+  const match = url.match(/\/providers\/(Microsoft\.[^/]+\/[^/?]+)/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+/** If we have a cached version for this provider, replace the api-version in the URL */
+function applyCachedApiVersion(apiPath: string): string {
+  const key = extractProviderKey(apiPath);
+  if (!key) return apiPath;
+  const cached = apiVersionCache.get(key);
+  if (!cached) return apiPath;
+  return apiPath.replace(/api-version=[^&]+/, 'api-version=' + cached);
+}
+
+/** Parse supported versions from a 400 error, cache the best one, and retry */
+async function tryResolveApiVersion(failedRes: Response, fetchUrl: string, token: string): Promise<Response | null> {
+  try {
+    const errBody = await failedRes.clone().json();
+    const errMsg: string = errBody?.error?.message || '';
+    if (!errMsg.includes('supported versions are')) return null;
+
+    const versionsList = errMsg.split('supported versions are ')[1];
+    if (!versionsList) return null;
+
+    const versions = versionsList.split(',').map((v: string) => v.trim());
+    const stable = versions.filter((v: string) => !v.includes('preview'));
+    const best = (stable.length > 0 ? stable[0] : versions[0]) || '';
+    if (!best) return null;
+
+    // Cache for future calls
+    const key = extractProviderKey(fetchUrl);
+    if (key) apiVersionCache.set(key, best);
+
+    const correctedUrl = fetchUrl.replace(/api-version=[^&]+/, 'api-version=' + best);
+    return trackedFetch(correctedUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    return null;
+  }
+}
+
 export function AzurePicker({ node }: AdaptiveComponentProps<AzurePickerNode>) {
   const token = useAzureToken();
   const { state, dispatch, disabled } = useAdaptive();
@@ -772,9 +820,22 @@ export function AzurePicker({ node }: AdaptiveComponentProps<AzurePickerNode>) {
       try {
         setLoading(true);
         setError(null);
-        const res = await trackedFetch(`${ARM_BASE_URL}${api}`, {
+
+        // Apply cached API version if we've resolved one for this provider before
+        let fetchUrl = `${ARM_BASE_URL}${applyCachedApiVersion(api)}`;
+        let res = await trackedFetch(fetchUrl, {
           headers: { Authorization: `Bearer ${token}` },
         });
+
+        // Auto-resolve API version: if the version is invalid, parse supported
+        // versions from the error, cache the best one, and retry.
+        if (res.status === 400) {
+          const resolved = await tryResolveApiVersion(res, fetchUrl, token);
+          if (resolved) {
+            res = resolved;
+          }
+        }
+
         if (!res.ok) throw new Error(`API error: ${res.status}`);
         const data = await res.json();
 
