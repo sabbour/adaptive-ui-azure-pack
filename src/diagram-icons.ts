@@ -55,6 +55,23 @@ import apiManagement from './icons/DevOps/API Management Services.svg?url';
 import subscription from './icons/General/Subscriptions.svg?url';
 import resourceGroup from './icons/General/Resource Groups.svg?url';
 
+// Kubernetes resource icons (labeled)
+import k8sDeploy from './icons/Kubernetes/resources/labeled/deploy.svg?url';
+import k8sSvc from './icons/Kubernetes/resources/labeled/svc.svg?url';
+import k8sSa from './icons/Kubernetes/resources/labeled/sa.svg?url';
+import k8sNs from './icons/Kubernetes/resources/labeled/ns.svg?url';
+import k8sHpa from './icons/Kubernetes/resources/labeled/hpa.svg?url';
+import k8sPod from './icons/Kubernetes/resources/labeled/pod.svg?url';
+import k8sIng from './icons/Kubernetes/resources/labeled/ing.svg?url';
+import k8sSecret from './icons/Kubernetes/resources/labeled/secret.svg?url';
+import k8sPvc from './icons/Kubernetes/resources/labeled/pvc.svg?url';
+import k8sCm from './icons/Kubernetes/resources/labeled/cm.svg?url';
+import k8sCrd from './icons/Kubernetes/resources/labeled/crd.svg?url';
+import k8sJob from './icons/Kubernetes/resources/labeled/job.svg?url';
+import k8sSts from './icons/Kubernetes/resources/labeled/sts.svg?url';
+import k8sDs from './icons/Kubernetes/resources/labeled/ds.svg?url';
+import k8sNetpol from './icons/Kubernetes/resources/labeled/netpol.svg?url';
+
 export function registerAzureDiagramIcons() {
   registerDiagramIcons({
     // Compute
@@ -109,5 +126,22 @@ export function registerAzureDiagramIcons() {
     // General
     'azure/subscription': subscription,
     'azure/resource-group': resourceGroup,
+
+    // Kubernetes resources
+    'k8s/deploy': k8sDeploy,
+    'k8s/svc': k8sSvc,
+    'k8s/sa': k8sSa,
+    'k8s/ns': k8sNs,
+    'k8s/hpa': k8sHpa,
+    'k8s/pod': k8sPod,
+    'k8s/ing': k8sIng,
+    'k8s/secret': k8sSecret,
+    'k8s/pvc': k8sPvc,
+    'k8s/cm': k8sCm,
+    'k8s/crd': k8sCrd,
+    'k8s/job': k8sJob,
+    'k8s/sts': k8sSts,
+    'k8s/ds': k8sDs,
+    'k8s/netpol': k8sNetpol,
   });
 }

@@ -8,6 +8,7 @@ import { PublicClientApplication, type AuthenticationResult, type INetworkModule
 const DEFAULT_CLIENT_ID = '04b07795-8ddb-461a-bbee-02f9e1bf7b46';
 const DEFAULT_AUTHORITY = 'https://login.microsoftonline.com/common';
 const ARM_SCOPE = 'https://management.core.windows.net//.default';
+const GRAPH_SCOPE = 'https://graph.microsoft.com/.default';
 
 // Custom network client that rewrites login.microsoftonline.com requests
 // to go through the Vite dev-server proxy, bypassing CORS.
@@ -134,6 +135,30 @@ export async function getActiveAccount(): Promise<AzureAuthResult | null> {
     return mapResult(result);
   } catch {
     return null;
+  }
+}
+
+/** Acquire a Microsoft Graph token silently (requires an active session) */
+export async function acquireGraphToken(): Promise<string> {
+  if (!msalInstance) {
+    const msal = getMsal();
+    await msal.initialize();
+  }
+  const accounts = msalInstance!.getAllAccounts();
+  if (accounts.length === 0) throw new Error('No active Azure session. Sign in first.');
+
+  try {
+    const result = await msalInstance!.acquireTokenSilent({
+      scopes: [GRAPH_SCOPE],
+      account: accounts[0],
+    });
+    return result.accessToken;
+  } catch {
+    // Silent failed, try popup for incremental consent
+    const result = await msalInstance!.acquireTokenPopup({
+      scopes: [GRAPH_SCOPE],
+    });
+    return result.accessToken;
   }
 }
 

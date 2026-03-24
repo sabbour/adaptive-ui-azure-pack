@@ -4,7 +4,7 @@ import type { AdaptiveNodeBase } from '@sabbour/adaptive-ui-core';
 import { useAdaptive } from '@sabbour/adaptive-ui-core';
 import { interpolate } from '@sabbour/adaptive-ui-core';
 import { fetchResourceTypeSchema, type ArmResourceSchema } from './arm-introspection';
-import { azureLogin, getActiveAccount } from './auth';
+import { azureLogin, getActiveAccount, acquireGraphToken } from './auth';
 import { getAzureIconUrl } from './icon-resolver';
 import { fetchSubscriptions } from './arm-introspection';
 import { SearchableDropdown } from '@sabbour/adaptive-ui-core';
@@ -451,9 +451,13 @@ export function AzureQuery({ node }: AdaptiveComponentProps<AzureQueryNode>) {
     setError(null);
     try {
       const url = resolvedApi.startsWith('http') ? resolvedApi : `${ARM_BASE}${resolvedApi}`;
+      const isGraphApi = url.startsWith('https://graph.microsoft.com');
+
+      // Use Graph-scoped token for Graph API calls, ARM token for everything else
+      const effectiveToken = isGraphApi ? await acquireGraphToken() : token;
 
       const headers: Record<string, string> = {
-        'Authorization': `Bearer ${token}`,
+        'Authorization': `Bearer ${effectiveToken}`,
         'Content-Type': 'application/json',
       };
 
@@ -621,7 +625,8 @@ export function AzureQuery({ node }: AdaptiveComponentProps<AzureQueryNode>) {
           style: {
             padding: '8px 16px', borderRadius: 'var(--adaptive-radius)',
             border: 'none', backgroundColor: 'var(--adaptive-primary)', color: '#fff',
-            fontSize: '13px', fontWeight: 500,
+            fontSize: '13px', fontWeight: 500, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: '6px',
           },
         }, React.createElement('img', { src: iconAzureA, alt: '', width: 14, height: 14, style: { filter: 'brightness(0) invert(1)' } }), `Execute ${method}`),
         React.createElement('button', {
@@ -635,6 +640,16 @@ export function AzureQuery({ node }: AdaptiveComponentProps<AzureQueryNode>) {
       )
     );
   }
+
+  // Build Azure Portal link from the ARM API path
+  const portalLink = (() => {
+    if (!resolvedApi || method === 'GET') return null;
+    // Match ARM resource paths: /subscriptions/.../resourceGroups/.../providers/...
+    const armMatch = resolvedApi.match(/^(\/subscriptions\/[^?]+)/);
+    if (!armMatch) return null;
+    const resourceId = armMatch[1];
+    return `https://portal.azure.com/#@/resource${resourceId}`;
+  })();
 
   // Success — show result if requested
   if (result && node.showResult) {
@@ -662,6 +677,14 @@ export function AzureQuery({ node }: AdaptiveComponentProps<AzureQueryNode>) {
           fontSize: '12px', color: '#166534', marginBottom: '8px',
         },
       }, `✓ ${method} completed — ${isArray ? items.length + ' items' : 'success'}`),
+      portalLink && React.createElement('a', {
+        href: portalLink, target: '_blank', rel: 'noopener noreferrer',
+        style: {
+          display: 'inline-flex', alignItems: 'center', gap: '4px',
+          fontSize: '12px', color: 'var(--adaptive-primary, #0078d4)',
+          textDecoration: 'none', marginBottom: '8px',
+        },
+      }, 'View in Azure Portal →'),
       isArray && items.length > 0 && orderedKeys.length > 0
         ? React.createElement('div', {
             style: { overflowX: 'auto', borderRadius: 'var(--adaptive-radius)', border: '1px solid var(--adaptive-border, #e5e7eb)' } as React.CSSProperties,
@@ -724,7 +747,17 @@ export function AzureQuery({ node }: AdaptiveComponentProps<AzureQueryNode>) {
         backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0',
         fontSize: '12px', color: '#166534', ...node.style,
       } as React.CSSProperties,
-    }, `✓ ${Array.isArray(result) ? result.length + ' items loaded' : 'Operation completed'}`);
+    },
+      React.createElement('div', null, `✓ ${Array.isArray(result) ? result.length + ' items loaded' : 'Operation completed'}`),
+      portalLink && React.createElement('a', {
+        href: portalLink, target: '_blank', rel: 'noopener noreferrer',
+        style: {
+          display: 'inline-flex', alignItems: 'center', gap: '4px',
+          fontSize: '12px', color: '#15803d',
+          textDecoration: 'underline', marginTop: '4px',
+        },
+      }, 'View in Azure Portal →')
+    );
   }
 
   return null;
