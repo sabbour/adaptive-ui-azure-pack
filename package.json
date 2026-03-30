@@ -1,6 +1,6 @@
 {
   "name": "@sabbour/adaptive-ui-azure-pack",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "MIT",
   "type": "module",
   "main": "src/index.ts",
@@ -9,7 +9,10 @@
     ".": "./src/index.ts",
     "./diagram-icons": "./src/diagram-icons.ts"
   },
-  "files": ["src", "dist"],
+  "files": [
+    "src",
+    "dist"
+  ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "main": "src/index.ts",
@@ -33,7 +36,7 @@
     "@azure/msal-browser": "^4.29.1"
   },
   "peerDependencies": {
-    "@sabbour/adaptive-ui-core": "^1.0.0",
+    "@sabbour/adaptive-ui-core": "^1.0.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
