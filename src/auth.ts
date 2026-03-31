@@ -5,10 +5,10 @@ import { PublicClientApplication, type AuthenticationResult, type INetworkModule
 // Uses the well-known Azure CLI client ID. Token exchange requests
 // are proxied through the Vite dev server to avoid browser CORS issues.
 
-const DEFAULT_CLIENT_ID = '04b07795-a710-4857-b18b-c38617ee3b58';
-const DEFAULT_AUTHORITY = 'https://login.microsoftonline.com/common';
-const ARM_SCOPE = 'https://management.core.windows.net//.default';
-const GRAPH_SCOPE = 'https://graph.microsoft.com/.default';
+const DEFAULT_CLIENT_ID = '6c303fad-f9a9-42a1-b92f-3b615179086c';
+const DEFAULT_AUTHORITY = 'https://login.microsoftonline.com/72f988bf-86f1-41af-91ab-2d7cd011db47';
+const ARM_SCOPE = 'https://management.azure.com/user_impersonation';
+const GRAPH_SCOPE = 'https://graph.microsoft.com/User.Read';
 
 // Custom network client that rewrites login.microsoftonline.com requests
 // to go through the Vite dev-server proxy, bypassing CORS.
