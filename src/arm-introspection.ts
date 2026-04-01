@@ -6,6 +6,15 @@ import { trackedFetch } from '@sabbour/adaptive-ui-core';
 
 const schemaCache = new Map<string, ArmResourceSchema>();
 
+/** Route ARM calls through the backend proxy.
+ *  If a user token is provided it's forwarded; otherwise the proxy
+ *  falls back to workload identity / DefaultAzureCredential. */
+function armFetch(path: string, token: string | undefined, init?: RequestInit): Promise<Response> {
+  const headers: Record<string, string> = { ...(init?.headers as Record<string, string> ?? {}) };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return trackedFetch(`/api/arm-proxy${path}`, { ...init, headers });
+}
+
 export interface ArmProperty {
   name: string;
   type: 'string' | 'number' | 'boolean' | 'enum' | 'object' | 'array';
@@ -40,12 +49,11 @@ export interface AzureSku {
 // ─── Fetch available Azure regions ───
 
 export async function fetchRegions(
-  token: string,
+  token: string | undefined,
   subscriptionId: string
 ): Promise<AzureRegion[]> {
-  const res = await trackedFetch(
-    `https://management.azure.com/subscriptions/${subscriptionId}/locations?api-version=2022-12-01`,
-    { headers: { Authorization: `Bearer ${token}` } }
+  const res = await armFetch(
+    `/subscriptions/${subscriptionId}/locations?api-version=2022-12-01`, token
   );
   if (!res.ok) throw new Error(`Failed to fetch regions: ${res.status}`);
   const data = await res.json();
@@ -61,12 +69,11 @@ export async function fetchRegions(
 // ─── Fetch resource groups ───
 
 export async function fetchResourceGroups(
-  token: string,
+  token: string | undefined,
   subscriptionId: string
 ): Promise<Array<{ name: string; location: string }>> {
-  const res = await trackedFetch(
-    `https://management.azure.com/subscriptions/${subscriptionId}/resourcegroups?api-version=2022-09-01`,
-    { headers: { Authorization: `Bearer ${token}` } }
+  const res = await armFetch(
+    `/subscriptions/${subscriptionId}/resourcegroups?api-version=2022-09-01`, token
   );
   if (!res.ok) throw new Error(`Failed to fetch resource groups: ${res.status}`);
   const data = await res.json();
@@ -79,11 +86,10 @@ export async function fetchResourceGroups(
 // ─── Fetch subscriptions ───
 
 export async function fetchSubscriptions(
-  token: string
+  token?: string
 ): Promise<Array<{ id: string; displayName: string; state: string }>> {
-  const res = await trackedFetch(
-    'https://management.azure.com/subscriptions?api-version=2022-12-01',
-    { headers: { Authorization: `Bearer ${token}` } }
+  const res = await armFetch(
+    '/subscriptions?api-version=2022-12-01', token
   );
   if (!res.ok) throw new Error(`Failed to fetch subscriptions: ${res.status}`);
   const data = await res.json();
@@ -97,16 +103,15 @@ export async function fetchSubscriptions(
 // ─── Fetch available SKUs for a resource provider ───
 
 export async function fetchSkus(
-  token: string,
+  token: string | undefined,
   subscriptionId: string,
   provider: string,
   location?: string
 ): Promise<AzureSku[]> {
   // Try the generic SKUs endpoint first
-  const url = `https://management.azure.com/subscriptions/${subscriptionId}/providers/${provider}/skus?api-version=2021-04-01`;
-  const res = await trackedFetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const res = await armFetch(
+    `/subscriptions/${subscriptionId}/providers/${provider}/skus?api-version=2021-04-01`, token
+  );
   if (!res.ok) return [];
   const data = await res.json();
   const skus: AzureSku[] = (data.value ?? []).map((s: any) => ({
@@ -132,7 +137,7 @@ export async function fetchSkus(
 // ─── Discover resource type schema from provider metadata ───
 
 export async function fetchResourceTypeSchema(
-  token: string,
+  token: string | undefined,
   resourceType: string
 ): Promise<ArmResourceSchema | null> {
   // Check cache (5 min TTL)
@@ -148,9 +153,8 @@ export async function fetchResourceTypeSchema(
 
   try {
     // Fetch provider metadata
-    const res = await trackedFetch(
-      `https://management.azure.com/providers/${namespace}?api-version=2021-04-01`,
-      { headers: { Authorization: `Bearer ${token}` } }
+    const res = await armFetch(
+      `/providers/${namespace}?api-version=2021-04-01`, token
     );
     if (!res.ok) return null;
     const provider = await res.json();
@@ -185,12 +189,11 @@ export async function fetchResourceTypeSchema(
 // ─── Discover all resource types for a provider ───
 
 export async function fetchProviderResourceTypes(
-  token: string,
+  token: string | undefined,
   namespace: string
 ): Promise<Array<{ resourceType: string; apiVersions: string[] }>> {
-  const res = await trackedFetch(
-    `https://management.azure.com/providers/${namespace}?api-version=2021-04-01`,
-    { headers: { Authorization: `Bearer ${token}` } }
+  const res = await armFetch(
+    `/providers/${namespace}?api-version=2021-04-01`, token
   );
   if (!res.ok) return [];
   const data = await res.json();

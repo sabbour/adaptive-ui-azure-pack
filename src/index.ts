@@ -83,7 +83,7 @@ export function createAzurePack(): ComponentPack {
           type: 'function' as const,
           function: {
             name: 'azure_arm_get',
-            description: 'Call the Azure Resource Manager REST API (GET only). Use to list existing resources, check infrastructure state, or read configuration before generating the UI response. Requires the user to have signed in via azureLogin first.',
+            description: 'Call the Azure Resource Manager REST API (GET only). Use to list existing resources, check infrastructure state, or read configuration. Works with or without user sign-in (falls back to workload identity).',
             parameters: {
               type: 'object',
               properties: {
@@ -98,14 +98,13 @@ export function createAzurePack(): ComponentPack {
         },
         handler: async (args: Record<string, unknown>) => {
           const acct = await getActiveAccount();
-          if (!acct) return 'Error: User is not signed in to Azure. Show the azureLogin component first.';
           let path = String(args.path);
           // Auto-inject the active subscription ID into placeholder patterns
           let subId = getActiveSubscriptionId();
           // If not set yet (e.g. session restored before component mounted), resolve from API
           if (!subId && path.includes('{sub-id}') || path.includes('{subscription-id}') || path.includes('{subscriptionId}')) {
             try {
-              const subs = await fetchSubscriptions(acct.accessToken);
+              const subs = await fetchSubscriptions(acct?.accessToken);
               const enabled = subs.filter((s) => s.state === 'Enabled');
               if (enabled.length > 0) {
                 subId = enabled[0].id;
@@ -118,11 +117,11 @@ export function createAzurePack(): ComponentPack {
               .split('{subscription-id}').join(subId)
               .split('{subscriptionId}').join(subId);
           }
-          const url = `https://management.azure.com${path.startsWith('/') ? '' : '/'}${path}`;
+          const url = `/api/arm-proxy${path.startsWith('/') ? '' : '/'}${path}`;
           try {
-            const res = await trackedFetch(url, {
-              headers: { Authorization: `Bearer ${acct.accessToken}`, Accept: 'application/json' },
-            });
+            const headers: Record<string, string> = { Accept: 'application/json' };
+            if (acct) headers['Authorization'] = `Bearer ${acct.accessToken}`;
+            const res = await trackedFetch(url, { headers });
             const data = await res.json();
             if (!res.ok) return `ARM API error (${res.status}): ${data?.error?.message ?? JSON.stringify(data)}`;
             const text = JSON.stringify(data, null, 2);

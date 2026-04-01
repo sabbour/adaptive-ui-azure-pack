@@ -272,7 +272,6 @@ export function AzureResourceForm({ node }: AdaptiveComponentProps<AzureResource
 
   useEffect(() => {
     if (disabled) return;
-    if (!token) return;
     setLoading(true);
     fetchResourceTypeSchema(token, node.resourceType)
       .then(setSchema)
@@ -280,7 +279,6 @@ export function AzureResourceForm({ node }: AdaptiveComponentProps<AzureResource
       .finally(() => setLoading(false));
   }, [token, node.resourceType]);
 
-  if (!token) return React.createElement(Banner, { message: 'azureResourceForm requires __azureToken in state.', type: 'warning' });
   if (loading) return React.createElement(LoadingSpinner, { label: `Fetching schema for ${node.resourceType}...` });
   if (error) return React.createElement(Banner, { message: error, type: 'error' });
   if (!schema) return React.createElement(Banner, { message: `Could not resolve schema for ${node.resourceType}`, type: 'error' });
@@ -409,12 +407,11 @@ interface AzureQueryNode extends AdaptiveNodeBase {
   confirm?: boolean;
 }
 
-const ARM_BASE = 'https://management.azure.com';
+const ARM_BASE = '/api/arm-proxy';
 
 export function AzureQuery({ node }: AdaptiveComponentProps<AzureQueryNode>) {
   const token = useAzureToken();
   const { state, dispatch, disabled } = useAdaptive();
-  const [authLoading, setAuthLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
@@ -436,7 +433,7 @@ export function AzureQuery({ node }: AdaptiveComponentProps<AzureQueryNode>) {
 
   // Check if the resolved API path has unresolved interpolation (empty segments like //)
   const hasUnresolvedState = resolvedApi.includes('//') && resolvedApi !== 'https://' && !resolvedApi.startsWith('http');
-  const isReady = !!token && !hasUnresolvedState;
+  const isReady = !hasUnresolvedState;
 
   // Auto-execute GET requests on mount (only when all state values are resolved)
   useEffect(() => {
@@ -453,13 +450,16 @@ export function AzureQuery({ node }: AdaptiveComponentProps<AzureQueryNode>) {
       const url = resolvedApi.startsWith('http') ? resolvedApi : `${ARM_BASE}${resolvedApi}`;
       const isGraphApi = url.startsWith('https://graph.microsoft.com');
 
-      // Use Graph-scoped token for Graph API calls, ARM token for everything else
-      const effectiveToken = isGraphApi ? await acquireGraphToken() : token;
-
+      // Graph API requires a user token; ARM calls go through the proxy
+      // which injects workload identity if no user token is present
       const headers: Record<string, string> = {
-        'Authorization': `Bearer ${effectiveToken}`,
         'Content-Type': 'application/json',
       };
+      if (isGraphApi) {
+        headers['Authorization'] = `Bearer ${await acquireGraphToken()}`;
+      } else if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
 
       const fetchOpts: RequestInit = { method, headers };
 
@@ -488,44 +488,6 @@ export function AzureQuery({ node }: AdaptiveComponentProps<AzureQueryNode>) {
     } finally {
       setLoading(false);
     }
-  }
-
-  if (!token) {
-    return React.createElement('div', {
-      style: {
-        padding: '12px 16px', borderRadius: 'var(--adaptive-radius, 8px)',
-        backgroundColor: '#FFFBEB', border: '1px solid #FDE68A',
-        display: 'flex', alignItems: 'center', gap: '12px',
-        fontSize: '13px', color: '#92400E',
-      },
-    },
-      React.createElement('span', null, 'Azure sign-in required to proceed.'),
-      React.createElement('button', {
-        onClick: async () => {
-          setAuthLoading(true);
-          setError(null);
-          try {
-            const auth = await azureLogin();
-            dispatch({ type: 'SET', key: '__azureToken', value: auth.accessToken });
-            await fetchAndStoreSubscriptions(auth.accessToken, dispatch, state.__azureSubscription as string | undefined);
-          } catch (err) {
-            setError(err instanceof Error ? err.message : 'Azure sign-in failed');
-          } finally {
-            setAuthLoading(false);
-          }
-        },
-        disabled: authLoading,
-        style: {
-          padding: '4px 12px', borderRadius: '6px', border: '1px solid #F59E0B',
-          backgroundColor: '#FEF3C7', cursor: 'pointer', fontSize: '12px',
-          fontWeight: 500, color: '#92400E', whiteSpace: 'nowrap',
-          opacity: authLoading ? 0.7 : 1,
-        } as React.CSSProperties,
-      }, authLoading ? 'Signing in...' : 'Sign in to Azure'),
-      error && React.createElement('div', {
-        style: { marginTop: '8px', fontSize: '12px', color: '#991b1b' },
-      }, error)
-    );
   }
 
   // Waiting for state values to be resolved
@@ -816,7 +778,7 @@ function parseSubscriptionFromUrl(url: string): string | null {
 }
 
 /** Fetch provider metadata and cache all resource type versions */
-async function fetchProviderMetadata(namespace: string, subscriptionId: string, token: string): Promise<Map<string, string> | null> {
+async function fetchProviderMetadata(namespace: string, subscriptionId: string, token: string | undefined): Promise<Map<string, string> | null> {
   const cacheKey = namespace.toLowerCase();
 
   // Return cached result
@@ -829,9 +791,11 @@ async function fetchProviderMetadata(namespace: string, subscriptionId: string, 
 
   const promise = (async (): Promise<Map<string, string> | null> => {
     try {
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await trackedFetch(
-        `https://management.azure.com/subscriptions/${subscriptionId}/providers/${namespace}?api-version=${ARM_META_API_VERSION}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        `/api/arm-proxy/subscriptions/${subscriptionId}/providers/${namespace}?api-version=${ARM_META_API_VERSION}`,
+        { headers }
       );
       if (!res.ok) return null;
       const data = await res.json();
@@ -864,7 +828,7 @@ async function fetchProviderMetadata(namespace: string, subscriptionId: string, 
 
 /** Resolve the correct API version for an ARM URL, replacing it in the path.
  *  Returns the corrected URL. If resolution fails, returns the original. */
-async function resolveApiVersion(apiPath: string, token: string): Promise<string> {
+async function resolveApiVersion(apiPath: string, token: string | undefined): Promise<string> {
   const provider = parseProviderFromUrl(apiPath);
   if (!provider) return apiPath;
 
@@ -893,14 +857,14 @@ export function AzurePicker({ node }: AdaptiveComponentProps<AzurePickerNode>) {
   const [options, setOptions] = useState<Array<{ label: string; value: string }>>([]);
 
   const api = interpolate(node.api, state as Record<string, string>, undefined, undefined, { allowSensitive: true });
-  const ARM_BASE_URL = 'https://management.azure.com';
+  const ARM_BASE_URL = '/api/arm-proxy';
 
   // Skip fetch if interpolation left empty segments (missing state values like subscription ID)
   const hasUnresolved = api.includes('//') && !api.startsWith('http');
 
   useEffect(() => {
     if (disabled) return;
-    if (!token || !api || hasUnresolved) return;
+    if (!api || hasUnresolved) return;
     let cancelled = false;
 
     (async () => {
@@ -911,9 +875,9 @@ export function AzurePicker({ node }: AdaptiveComponentProps<AzurePickerNode>) {
         // Resolve the correct API version from ARM provider metadata before making the call
         const resolvedApi = await resolveApiVersion(api, token);
         const fetchUrl = `${ARM_BASE_URL}${resolvedApi}`;
-        const res = await trackedFetch(fetchUrl, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const res = await trackedFetch(fetchUrl, { headers });
 
         if (!res.ok) throw new Error(`API error: ${res.status}`);
         const data = await res.json();
@@ -959,10 +923,6 @@ export function AzurePicker({ node }: AdaptiveComponentProps<AzurePickerNode>) {
 
   if (hasUnresolved) {
     return React.createElement(LoadingSpinner, { label: node.loadingLabel ?? 'Waiting for selection...' });
-  }
-
-  if (!token) {
-    return React.createElement(Banner, { message: 'Sign in to Azure first', type: 'warning' });
   }
 
   if (loading) {
