@@ -1,6 +1,6 @@
 {
   "name": "@sabbour/adaptive-ui-azure-pack",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "license": "MIT",
   "type": "module",
   "main": "src/index.ts",
@@ -36,7 +36,7 @@
     "@azure/msal-browser": "^4.29.1"
   },
   "peerDependencies": {
-    "@sabbour/adaptive-ui-core": "^1.1.0",
+    "@sabbour/adaptive-ui-core": "^1.1.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
